@@ -1,0 +1,173 @@
+<?xml version="1.0"?>
+<package>
+    <?component error="false" debug="false"?>
+    <comment>
+        Library of functions to shuffle the display of images for
+        the Photos App Tile, the default Logon Picture, the Lockscreen
+        and the Desktop Backgrounds.
+    </comment>
+    <component>
+        <registration 
+        progid="CustomUI.Shuffler"
+        description="ImageShufflingTasks"
+        version="1"
+        classid="___CLSID___"/>
+        <public>
+            <property name="WorkDir">
+                <put internalname="SetWorkDir"/>
+            </property>
+            <method name="Shuffle">
+                <parameter name="strAppID"/>
+            </method>
+            <method name="RefreshStartMenu"/>
+        </public>
+        <script language="vbscript">
+            <![CDATA[
+            Set LibraryDir = ScriptFso.GetFile(Mid(WshShell.RegRead(GetResource("ScriptletURL")), 9)).ParentFolder
+            Set WorkDir = LibraryDir
+
+            Sub SetWorkDir(strFolderPath)
+                If ScriptFso.FolderExists(strFolderPath) Then Set WorkDir = ScriptFso.GetFolder(strFolderPath)
+            End Sub
+
+            Public Default Sub Shuffle(strAppID)
+                UAppID = UCase(strAppID)
+                arrAppID = Split(UCase(GetResource("AppIDList")), ",")
+                If UAppID = arrAppID(0) Or UAppID = arrAppID(1) Or UAppID = arrAppID(2) Then
+                    SelectAsset GetRef(SetRefName(strAppID)), strAppID, "File"
+                ElseIf UAppID = arrAppID(3) Then
+                    SelectAsset GetRef(SetRefName(strAppID)), strAppID, "Folder"
+                End If
+            End Sub
+
+            Public Sub RefreshStartMenu
+                StartMenuCommandLine = "Explorer.exe Shell:AppsFolder\" &_
+                "Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy!App"
+                For Each wmiobject In GetObject("winmgmts://./root/cimv2").ExecQuery(_
+                    "SELECT * FROM Win32_Process " &_
+                    "WHERE Name='StartMenuExperienceHost.exe'")
+                    wmiobject.Terminate
+                    StartMenuCommandLine = wmiobject.CommandLine
+                Next
+                WshShell.Run StartMenuCommandLine, 0, True
+            End Sub
+
+            Private Function SetRefName(AppID)
+                SetRefName = "Set" & AppID
+            End Function
+
+            Private Sub SelectAsset(JobHandler, AssetID, AssetType)
+                Set Assets = WorkDir.SubFolders(CStr(AssetID))
+                Select Case UCase(AssetType)
+                    Case "FILE" : Set Assets = Assets.Files
+                    Case "FOLDER" : Set Assets = Assets.SubFolders
+                End Select
+                MaxIndex = 0
+                If UCase(AssetID) = "PHOTOSTILE" Then MaxIndex = 4
+                For index = 0 To MaxIndex
+                    Counter = RandomSelect(AssetID, Assets.Count) - 1
+                    For Each asset In Assets
+                        If Counter = 0 Then JobHandler asset, index
+                        Counter = Counter - 1
+                    Next
+                Next
+            End Sub
+
+            Private Function RandomSelect(AssetID, Length)
+                AssetIDKey = GetResource("CustomUIKey") & AssetID
+                On Error Resume Next
+                Err.Clear
+                Previous = CleanList(WshShell.RegRead(AssetIDKey))
+                If Err.Number <> 0 Then Previous = "\"
+                On Error Goto 0
+                Counter = 1
+                For Each item In GetArray(Previous)
+                    If Int(item) > Length Then
+                        Previous = Replace(Previous, GetToken(item), "\")
+                    ElseIf Counter >= Length Then
+                        Previous = "\"
+                        Exit For
+                    Else
+                        Counter = Counter + 1
+                    End If
+                Next
+                Randomize
+                Index = Int(Rnd * (Length - (UBound(GetArray(Previous)) + 1)))
+                Counter = 0
+                For i = 1 To Length
+                    If InStr(Previous, GetToken(i)) = 0 Then
+                        If Counter = Index Then
+                            Selected = i
+                            Exit For
+                        End If
+                        Counter = Counter + 1
+                    End If
+                Next
+                WshShell.RegWrite AssetIDKey, CleanList("\" & Selected & Previous)
+                RandomSelect = Selected
+            End Function
+            
+            Private Function GetArray(ByRef Previous)
+                GetArray = Array()
+                Previous = CleanList(Previous)
+                If Previous = "\"  Then Exit Function
+                GetArray = Split(Mid(Previous, 2, Len(Previous) - 2), "\")
+            End Function
+            
+            Private Function GetToken(Item)
+                GetToken = "\" & Item & "\"
+            End Function
+            
+            Private Function CleanList(Previous)
+                Do
+                    CurrentList = Previous
+                    Previous = Replace(Previous, "\\", "\")
+                Loop Until CurrentList = Previous
+                CleanList = Previous
+            End Function
+
+            Private Sub SetPhotosTile(Image, Index)
+                On Error Resume Next
+                TileDir = WshShell.ExpandEnvironmentStrings(GetResource("PhotosTileDir"))
+                ScriptFso.CreateFolder(TileDir)
+                Image.Copy ScriptFso.BuildPath(TileDir, Replace("Tile#.jpg", "#", Index)), True
+            End Sub
+            
+            Private Sub SetLogonPicture(Image, Index)
+                On Error Resume Next
+                For Each item In Array(Null, -32, -40, -48, -192)
+                    item = "user" & item & ".png"
+                    Image.Files.Item(CStr(item)).Copy ScriptFso.BuildPath(GetResource("UserAccountPictureDir"), item), True
+                Next
+            End Sub
+            
+            Private Sub SetLockscreenBG(Image, Index)
+                Image.Copy WshShell.RegRead(GetResource("LockScreenImagePath")), True
+            End Sub
+            
+            Private Sub SetDesktopBG(Image, Index)
+                CurrentWallpaper = ReadWallpaper
+                For Each verb In AppShell.Namespace(Image.ParentFolder.Path).ParseName(Image.Name).Verbs
+                    If Replace(LCase(verb.Name), "&", "") = "set as desktop background" Then verb.DoIt
+                Next
+                Do : Loop Until CurrentWallpaper <> ReadWallpaper
+            End Sub
+
+            Private Function ReadWallpaper
+                On Error Resume Next
+                ReadWallpaper = WshShell.RegRead(GetResource("CurrentWallpaperPath"))
+            End Function
+            ]]>
+        </script>
+        <object id="WshShell" progid="WScript.Shell"/>
+        <object id="ScriptFso" progid="Scripting.FileSystemObject"/>
+        <object id="AppShell" progid="Shell.Application"/>
+        <resource id="ScriptletURL">HKCR\CLSID\___CLSID___\ScriptletURL\</resource>
+        <resource id="CustomUIKey">HKCU\SOFTWARE\Classes\CustomUI\</resource>
+        <resource id="AppIDList">PhotosTile,DesktopBG,LockscreenBG,LogonPicture</resource>
+        <resource id="CurrentWallpaperPath">HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers\BackgroundHistoryPath0</resource>
+        <resource id="LockScreenImagePath">HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP\LockScreenImagePath</resource>
+        <resource id="UserAccountPictureDir">C:\ProgramData\Microsoft\User Account Pictures</resource>
+        <resource id="PhotosTileDir">%LocalAppData%\Packages\Microsoft.Windows.Photos_8wekyb3d8bbwe\LocalState\PhotosAppTile</resource>
+    </component>
+</package>
